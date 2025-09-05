@@ -1,0 +1,24 @@
+[project]
+name = "futboliq_mcp"
+version = "0.1.0"
+description = "Local MCP server to analyze football matches and detect first high-impact error (ΔxT)."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name="Tu Nombre"}]
+dependencies = [
+  "mcp[cli]",
+  "pandas",
+  "numpy>",
+  "socceraction",
+  "statsbombpy",
+  "pydantic"
+]
+
+[project.optional-dependencies]
+viz = ["mplsoccer>=1.3.1","matplotlib>=3.8.0"]
+
+[project.scripts]
+futboliq-mcp = "futboliq_mcp.server:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
