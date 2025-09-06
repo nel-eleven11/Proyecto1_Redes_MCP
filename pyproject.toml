@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.13.1",
-    "socceraction[statsbomb]>=1.5.3",
+    "pandas>=2.3.2",
+    "pyarrow>=21.0.0",
+    "socceraction>=1.5.3",
     "statsbombpy>=1.16.0",
 ]

@@ -1,6 +1,6 @@
 mcp[cli]
 pandas 
 numpy 
-socceraction[statsbombpy]
+socceraction
 statsbombpy 
-pydantic
+pyarrow
