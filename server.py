@@ -24,7 +24,6 @@ _XT_MODEL_URL = "https://karun.in/blog/data/open_xt_12x8_v1.json"
 try:
     XT_MODEL = xthreat.load_model(_XT_MODEL_URL)
 except Exception as e:
-    # If you prefer, you can bake a local JSON of the xT grid and load from disk as a fallback.
     raise RuntimeError(
         "Failed to load xT model from URL. Check your internet connection "
         "or replace the URL with a local JSON file."
@@ -44,9 +43,6 @@ def _list_competitions() -> pd.DataFrame:
 def _find_match_row(match_id: int) -> pd.Series:
     """
     Find the row for a given match_id across all open-data competitions/seasons.
-
-    StatsBombPy's API requires (competition_id, season_id) to list matches.
-    Since we are called with only match_id, we scan known competitions once and cache the hit.
     """
     if match_id in _MATCH_ROW_CACHE:
         return _MATCH_ROW_CACHE[match_id]
@@ -58,7 +54,7 @@ def _find_match_row(match_id: int) -> pd.Series:
         try:
             matches = sb.matches(competition_id=comp_id, season_id=season_id)
         except Exception:
-            continue  # skip this competition on transient/network issues
+            continue
 
         if not isinstance(matches, pd.DataFrame) or matches.empty:
             continue
@@ -75,25 +71,116 @@ def _find_match_row(match_id: int) -> pd.Series:
     )
 
 
+def _infer_home_team_id_from_events(match_row: pd.Series, events: pd.DataFrame) -> int:
+    """
+    Infer numeric home team id when matches row doesn't include 'home_team_id'.
+    We map the home team NAME from sb.matches() to the (team, team_id) pairs found in events.
+    """
+    home_name = None
+    for candidate in ("home_team", "home_team_name"):
+        if candidate in match_row.index and pd.notna(match_row[candidate]):
+            home_name = str(match_row[candidate])
+            break
+    if not home_name:
+        # StatsBomb nested structure may exist; try pulling from dict-like
+        if "home_team" in match_row.index and isinstance(match_row["home_team"], dict):
+            home_name = match_row["home_team"].get("home_team_name")
+    if not home_name:
+        raise RuntimeError("Could not resolve home team name from matches row.")
+
+    if "team" not in events.columns or "team_id" not in events.columns:
+        raise RuntimeError("Events dataframe lacks 'team'/'team_id' to infer home team id.")
+
+    pairs = events[["team", "team_id"]].dropna().drop_duplicates()
+    # exact name
+    hit = pairs[pairs["team"].astype(str) == home_name]
+    if not hit.empty:
+        return int(hit.iloc[0]["team_id"])
+    # normalized name
+    home_norm = home_name.strip().lower()
+    hit = pairs[pairs["team"].astype(str).str.strip().str.lower() == home_norm]
+    if not hit.empty:
+        return int(hit.iloc[0]["team_id"])
+
+    raise RuntimeError(
+        f"Could not infer home team id from events. Home name '{home_name}' not found among event teams."
+    )
+
+
+def _get_home_team_id(match_row: pd.Series, events: pd.DataFrame) -> int:
+    """
+    Robust home team id resolver:
+    1) Use 'home_team_id' if present (flattened).
+    2) Use nested dict in 'home_team' if present.
+    3) Otherwise infer from events mapping (team name -> team_id).
+    """
+    if "home_team_id" in match_row.index and pd.notna(match_row["home_team_id"]):
+        return int(match_row["home_team_id"])
+    if "home_team" in match_row.index and isinstance(match_row["home_team"], dict):
+        ht = match_row["home_team"]
+        if "home_team_id" in ht:
+            return int(ht["home_team_id"])
+    if "home_team" in match_row.index and isinstance(match_row["home_team"], (int, np.integer)):
+        return int(match_row["home_team"])
+    return _infer_home_team_id_from_events(match_row, events)
+
+
 def _safe_name(df: pd.DataFrame, id_col: str, name_col: str) -> pd.DataFrame:
     """
     Utility to normalize id->name mapping from events frame.
     Some events rows may have NaNs in player/team; we drop those safely.
     """
-    cols = [c for c in (id_col, name_col) if c in df.columns]
-    if len(cols) < 2:
-        # If the events frame doesn't have both columns, return empty mapping
-        return pd.DataFrame(columns=[id_col, name_col]).astype({id_col: "Int64", name_col: "string"})
-    mapping = (
-        df[cols]
-        .dropna()
-        .drop_duplicates()
-        .rename(columns={id_col: id_col, name_col: name_col})
-    )
-    # enforce dtypes for safer merges
-    mapping[id_col] = mapping[id_col].astype("int64", errors="ignore")
-    mapping[name_col] = mapping[name_col].astype("string")
+    if id_col not in df.columns or name_col not in df.columns:
+        out = pd.DataFrame(columns=[id_col, name_col])
+        return out.astype({id_col: "Int64", name_col: "string"})
+
+    mapping = df[[id_col, name_col]].dropna().drop_duplicates()
+    try:
+        mapping[id_col] = mapping[id_col].astype("Int64")
+    except Exception:
+        pass
+    try:
+        mapping[name_col] = mapping[name_col].astype("string")
+    except Exception:
+        pass
     return mapping
+
+
+def _ensure_action_names(actions: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure 'type_name', 'result_name', 'bodypart_name' exist by joining
+    SPADL lookup tables on *_id columns when necessary.
+    This makes downstream code and xT model robust across library versions.
+    """
+    # Work on a copy to avoid SettingWithCopy warnings
+    a = actions.copy()
+
+    # Guaranteed lookup tables from socceraction.spadl.config
+    at = spadl.actiontypes_df.copy()
+    rt = spadl.results_df.copy()
+    bt = spadl.bodyparts_df.copy()
+
+    # Normalize dtypes to int where possible
+    for col in ("type_id", "result_id", "bodypart_id"):
+        if col in a.columns:
+            try:
+                a[col] = a[col].astype("Int64")
+            except Exception:
+                pass
+
+    # type_name
+    if "type_name" not in a.columns and "type_id" in a.columns:
+        a = a.merge(at[["type_id", "type_name"]], on="type_id", how="left")
+
+    # result_name
+    if "result_name" not in a.columns and "result_id" in a.columns:
+        a = a.merge(rt[["result_id", "result_name"]], on="result_id", how="left")
+
+    # bodypart_name
+    if "bodypart_name" not in a.columns and "bodypart_id" in a.columns:
+        a = a.merge(bt[["bodypart_id", "bodypart_name"]], on="bodypart_id", how="left")
+
+    return a
 
 
 def _load_actions_with_xt(match_id: int) -> pd.DataFrame:
@@ -110,52 +197,60 @@ def _load_actions_with_xt(match_id: int) -> pd.DataFrame:
     if not isinstance(events, pd.DataFrame) or events.empty:
         raise ValueError(f"No events found for match_id={match_id}")
 
-    # Resolve match row to get home_team (needed by SPADL orientation)
+    # Resolve match row to get home team ID (needed by SPADL orientation)
     mrow = _find_match_row(match_id)
-    # Column names in matches typically include: 'home_team' and 'away_team'
-    # Fall back gracefully if column naming differs
-    if "home_team" not in mrow.index:
-        raise RuntimeError("Expected 'home_team' in matches row, but it was not found.")
-    home_team = int(mrow["home_team"])
+    home_team_id = _get_home_team_id(mrow, events)
 
     # Convert events -> SPADL actions for StatsBomb schema
-    # This produces standard SPADL fields including player_id, team_id, type_id/name, result_name, etc.
-    actions = spadl.statsbomb.convert_to_actions(events, home_team)
-    actions = spadl.add_names(actions)
+    actions = spadl.statsbomb.convert_to_actions(events, home_team_id)
+
+    # Add canonical names (robust even if add_names is a no-op in this version)
+    try:
+        actions = spadl.add_names(actions)
+    except Exception:
+        # If add_names fails for any reason, continue and ensure names ourselves
+        pass
+    actions = _ensure_action_names(actions)
 
     # Add player/team names by merging from events where possible
     player_map = _safe_name(events, "player_id", "player")
     team_map = _safe_name(events, "team_id", "team")
 
-    if not player_map.empty and "player_id" in actions.columns:
-        actions = actions.merge(player_map.rename(columns={"player": "player_name"}), on="player_id", how="left")
-    else:
-        actions["player_name"] = pd.NA
+    if "player_id" in actions.columns:
+        if not player_map.empty:
+            actions = actions.merge(
+                player_map.rename(columns={"player": "player_name"}),
+                on="player_id",
+                how="left",
+            )
+        else:
+            actions["player_name"] = pd.NA
 
-    if not team_map.empty and "team_id" in actions.columns:
-        actions = actions.merge(team_map.rename(columns={"team": "team_name"}), on="team_id", how="left")
-    else:
-        actions["team_name"] = pd.NA
+    if "team_id" in actions.columns:
+        if not team_map.empty:
+            actions = actions.merge(
+                team_map.rename(columns={"team": "team_name"}),
+                on="team_id",
+                how="left",
+            )
+        else:
+            actions["team_name"] = pd.NA
 
     # Ensure we can compute a readable minute later
-    # SPADL may include 'time_seconds'; if not, approximate from events timing
     if "time_seconds" not in actions.columns:
-        # Best-effort approximation: use cumulative seconds within each period if available
         if "period_id" in actions.columns and "seconds" in actions.columns:
-            # some pipelines produce 'seconds' as within-period seconds; convert to match clock
-            # Standard halves are 45 minutes; this is a rough heuristic.
             actions["time_seconds"] = np.where(
-                actions["period_id"] == 1, actions["seconds"],
-                np.where(actions["period_id"] == 2, actions["seconds"] + 45 * 60, actions["seconds"])
+                actions["period_id"] == 1,
+                actions["seconds"],
+                np.where(actions["period_id"] == 2, actions["seconds"] + 45 * 60, actions["seconds"]),
             )
         else:
             actions["time_seconds"] = np.nan
 
     # Orient L->R before xT rating (xT is field-position dependent)
-    actions_ltr = spadl.play_left_to_right(actions, home_team)
+    actions_ltr = spadl.play_left_to_right(actions, home_team_id)
 
-    # Compute action-level xT contribution (this is ΔxT per action)
-    # The public model returns an array-like of the same length as actions_ltr
+    # Compute action-level xT contribution (ΔxT per action)
     xt_values = XT_MODEL.rate(actions_ltr)
     actions["xT"] = pd.Series(xt_values, index=actions.index)
 
@@ -188,15 +283,21 @@ def best_play(match_id: int) -> dict:
         idx = actions["xT"].idxmax()
         row = actions.loc[idx]
     else:
-        # If xT is entirely NaN (shouldn't happen with valid data), bail gracefully
         return {"error": f"xT values are all NaN for match_id={match_id}"}
 
     minute = _int_minute_from_seconds(row.get("time_seconds"))
+    # Prefer 'type_name'; if still missing, fall back to 'type_id'
+    action_type = None
+    if "type_name" in actions.columns and pd.notna(row.get("type_name")):
+        action_type = str(row.get("type_name"))
+    elif "type_id" in actions.columns and pd.notna(row.get("type_id")):
+        action_type = f"type_{int(row.get('type_id'))}"
+
     return {
         "match_id": match_id,
         "player": (row.get("player_name") if pd.notna(row.get("player_name")) else None),
         "team": (row.get("team_name") if pd.notna(row.get("team_name")) else None),
-        "action_type": (row.get("type_name") if "type_name" in actions.columns else None),
+        "action_type": action_type,
         "minute": minute,
         "xT": float(row["xT"]) if pd.notna(row["xT"]) else None,
         "spadl_index": int(idx),
@@ -211,7 +312,6 @@ def player_performance(match_id: int) -> list[dict]:
     """
     actions = _load_actions_with_xt(match_id)
 
-    # Initialize basic aggregates
     grouped = actions.groupby("player_id", dropna=True)
 
     rows: list[dict] = []
@@ -224,52 +324,48 @@ def player_performance(match_id: int) -> list[dict]:
         total_xt = float(grp["xT"].fillna(0.0).sum())
         positive_actions = int((grp["xT"].fillna(0.0) > 0).sum())
 
-        # Shots and goals from SPADL semantics:
-        # type_name == "shot" is a shot. A goal is typically a shot with a "success" result in SPADL.
+        # Shots and goals from SPADL semantics
         shots = int((grp.get("type_name") == "shot").sum()) if "type_name" in grp.columns else 0
 
-        # Goals: prefer 'result_name' == 'success' for shot rows; else 0
         if "type_name" in grp.columns and "result_name" in grp.columns:
             goals = int(((grp["type_name"] == "shot") & (grp["result_name"] == "success")).sum())
         else:
             goals = 0
 
-        # Simple assist heuristic:
-        # Count an assist when a shot-success is immediately preceded by a pass/cross from same team.
+        # Assist heuristic: previous action same team is a pass/cross by this player.
         assists = 0
         if "type_name" in actions.columns and "result_name" in actions.columns:
-            # find indices of goal shots in the full actions frame
             goal_rows = actions.index[(actions["type_name"] == "shot") & (actions["result_name"] == "success")]
             for gidx in goal_rows:
                 prev_idx = gidx - 1
                 if prev_idx in actions.index:
                     prev_row = actions.loc[prev_idx]
                     g_row = actions.loc[gidx]
+                    prev_pid = prev_row.get("player_id")
                     if (
                         prev_row.get("team_id") == g_row.get("team_id")
                         and prev_row.get("type_name") in ("pass", "cross")
-                        and int(prev_row.get("player_id")) == int(pid)
+                        and pd.notna(prev_pid)
+                        and int(prev_pid) == int(pid)
                     ):
                         assists += 1
 
         rows.append(
             {
-                "player_id": int(pid),
+                "player_id": int(pid) if pd.notna(pid) else None,
                 "player": player_name,
                 "team": team_name,
                 "total_xT": round(total_xt, 4),
                 "positive_actions": positive_actions,
                 "shots": shots,
-                "goals": assists + (goals - assists),  # store goals as-is; keep assists separate
+                "goals": goals,
                 "assists": assists,
             }
         )
 
-    # Sort by total_xT desc for convenience
     rows.sort(key=lambda r: r["total_xT"], reverse=True)
     return rows
 
 
 if __name__ == "__main__":
-    
     mcp.run()
