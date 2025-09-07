@@ -313,7 +313,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow" },
-    { name = "socceraction" },
+    { name = "socceraction", extra = ["statsbomb"] },
     { name = "statsbombpy" },
 ]
 
@@ -324,7 +324,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "pandas", specifier = ">=2.3.2" },
     { name = "pyarrow", specifier = ">=21.0.0" },
-    { name = "socceraction", specifier = ">=1.5.3" },
+    { name = "socceraction", extras = ["statsbomb"], specifier = ">=1.5.3" },
     { name = "statsbombpy", specifier = ">=1.16.0" },
 ]
 
@@ -970,6 +970,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d6/ef/7699091682c7c38749bc2e0a7a2ec6e192c50e62a614e809a460aff79546/socceraction-1.5.3.tar.gz", hash = "sha256:8e22e7437a9168cc44f2d2619ebe1095e3b3d175b35c84c5a9b6635bf07470a8", size = 72114, upload-time = "2024-08-15T08:34:10.113Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c9/45/88ef58854e2f44f4533fcff4873d16a6cb770e94744b29e75b9cdb429bb2/socceraction-1.5.3-py3-none-any.whl", hash = "sha256:43abbafab03d103440bdd4e2abb95d71b0715f588fb43ff7e57e2d8edd51f3ad", size = 93103, upload-time = "2024-08-15T08:34:08.443Z" },
+]
+
+[package.optional-dependencies]
+statsbomb = [
+    { name = "statsbombpy" },
 ]
 
 [[package]]

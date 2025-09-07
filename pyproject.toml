@@ -10,7 +10,7 @@ dependencies = [
     "numpy>=1.26.4",
     "pandas>=2.3.2",
     "pyarrow>=21.0.0",
-    "socceraction>=1.5.3",
+    "socceraction[statsbomb]>=1.5.3",
     "statsbombpy>=1.16.0",
 ]
 
