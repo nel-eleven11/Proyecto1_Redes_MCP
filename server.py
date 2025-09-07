@@ -11,16 +11,6 @@ import numpy as np
 import socceraction.spadl as spadl
 import socceraction.xthreat as xthreat
 
-# Optional: allow the dev inspector to read declared dependencies from the module.
-# This is only used by `mcp dev` to ensure the runtime has what it needs.
-dependencies = [
-    "socceraction>=1.3.0",
-    "statsbombpy>=1.11.0",
-    "pandas>=2.2,<3",
-    "numpy>=1.26,<2",
-    "pyarrow",
-]
-
 # Instantiate the FastMCP server
 mcp = FastMCP("SoccerBestPlayMCP")
 
@@ -120,17 +110,17 @@ def _load_actions_with_xt(match_id: int) -> pd.DataFrame:
     if not isinstance(events, pd.DataFrame) or events.empty:
         raise ValueError(f"No events found for match_id={match_id}")
 
-    # Resolve match row to get home_team_id (needed by SPADL orientation)
+    # Resolve match row to get home_team (needed by SPADL orientation)
     mrow = _find_match_row(match_id)
-    # Column names in matches typically include: 'home_team_id' and 'away_team_id'
+    # Column names in matches typically include: 'home_team' and 'away_team'
     # Fall back gracefully if column naming differs
-    if "home_team_id" not in mrow.index:
-        raise RuntimeError("Expected 'home_team_id' in matches row, but it was not found.")
-    home_team_id = int(mrow["home_team_id"])
+    if "home_team" not in mrow.index:
+        raise RuntimeError("Expected 'home_team' in matches row, but it was not found.")
+    home_team = int(mrow["home_team"])
 
     # Convert events -> SPADL actions for StatsBomb schema
     # This produces standard SPADL fields including player_id, team_id, type_id/name, result_name, etc.
-    actions = spadl.statsbomb.convert_to_actions(events, home_team_id)
+    actions = spadl.statsbomb.convert_to_actions(events, home_team)
     actions = spadl.add_names(actions)
 
     # Add player/team names by merging from events where possible
@@ -162,7 +152,7 @@ def _load_actions_with_xt(match_id: int) -> pd.DataFrame:
             actions["time_seconds"] = np.nan
 
     # Orient L->R before xT rating (xT is field-position dependent)
-    actions_ltr = spadl.play_left_to_right(actions, home_team_id)
+    actions_ltr = spadl.play_left_to_right(actions, home_team)
 
     # Compute action-level xT contribution (this is ΔxT per action)
     # The public model returns an array-like of the same length as actions_ltr
