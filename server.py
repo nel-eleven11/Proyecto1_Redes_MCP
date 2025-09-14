@@ -3,6 +3,9 @@ from mcp.server.fastmcp import FastMCP
 from socceraction.data.statsbomb import StatsBombLoader
 import socceraction.spadl as spadl
 import socceraction.xthreat as xthreat
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Initialize MCP server with FastMCP
 mcp = FastMCP("SoccerAnalysis")  # Descriptive server name
@@ -124,4 +127,4 @@ def player_performance(match_id: int) -> list:
 
 if __name__ == "__main__":
     # Run MCP server 
-    mcp.run()
+    mcp.run(transport="stdio")

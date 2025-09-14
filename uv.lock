@@ -313,6 +313,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow" },
+    { name = "python-dotenv" },
     { name = "socceraction", extra = ["statsbomb"] },
     { name = "statsbombpy" },
 ]
@@ -324,6 +325,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "pandas", specifier = ">=2.3.2" },
     { name = "pyarrow", specifier = ">=21.0.0" },
+    { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "socceraction", extras = ["statsbomb"], specifier = ">=1.5.3" },
     { name = "statsbombpy", specifier = ">=1.16.0" },
 ]
